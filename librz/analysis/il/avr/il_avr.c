@@ -80,23 +80,56 @@
 		(name)->op.store->value = var; \
 	} while (0)
 
-#define avr_il_set_bit(name, reg, b, pos) \
+#define avr_il_set_bits(name, reg, and_bits, or_bits) \
 	do { \
-		ut16 bits = 1 << (pos); \
-		if (!b) { \
-			bits = ~bits; \
+		RzILOp *tmp = NULL; \
+		RzILOp *sreg = rz_il_new_op(RZIL_OP_VAR); \
+		sreg->op.var->v = (reg); \
+		tmp = rz_il_new_op(RZIL_OP_INT); \
+		tmp->op.int_->value = (and_bits); \
+		tmp->op.int_->length = AVR_REG_SIZE; \
+		RzILOp *opand = rz_il_new_op(RZIL_OP_LOGAND); \
+		opand->op.logand->x = sreg; \
+		opand->op.logand->y = tmp; \
+		if (or_bits) { \
+			RzILOp *mask1 = rz_il_new_op(RZIL_OP_INT); \
+			mask1->op.int_->value = (or_bits); \
+			mask1->op.int_->length = AVR_REG_SIZE; \
+			tmp = rz_il_new_op(RZIL_OP_LOGOR); \
+			tmp->op.logand->x = opand; \
+			tmp->op.logand->y = mask1; \
+		} else { \
+			tmp = opand; \
 		} \
-		RzILOp *var = rz_il_new_op(RZIL_OP_VAR); \
-		var->op.var->v = reg; \
-		RzILOp *n = rz_il_new_op(RZIL_OP_INT); \
-		n->op.int_->value = bits; \
-		n->op.int_->length = AVR_REG_SIZE; \
-		RzILOp *lop = rz_il_new_op(b ? RZIL_OP_LOGOR : RZIL_OP_LOGAND); \
-		lop->op.logor->x = var; \
-		lop->op.logor->y = n; \
 		RzILOp *set = rz_il_new_op(RZIL_OP_SET); \
-		set->op.set->x = lop; \
+		set->op.set->x = tmp; \
 		set->op.set->v = (reg); \
+		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
+		(name)->op.perform->eff = set; \
+	} while (0)
+
+#define avr_il_set16_from_reg(name, dst, and_mask, sh, src) \
+	do { \
+		RzILOp *var0 = rz_il_new_op(RZIL_OP_VAR); \
+		var0->op.var->v = (dst); \
+		RzILOp *mask = rz_il_new_op(RZIL_OP_INT); \
+		mask->op.int_->value = (and_mask); \
+		mask->op.int_->length = 16; \
+		RzILOp *opand = rz_il_new_op(RZIL_OP_LOGAND); \
+		opand->op.logand->x = var0; \
+		opand->op.logand->y = mask; \
+		RzILOp *var1 = rz_il_new_op(RZIL_OP_VAR); \
+		var1->op.var->v = (src); \
+		RzILOp *cast = rz_il_new_op(RZIL_OP_CAST); \
+		cast->op.cast->val = var1; \
+		cast->op.cast->length = 16; \
+		cast->op.cast->shift = (sh); \
+		RzILOp *opor = rz_il_new_op(RZIL_OP_LOGOR); \
+		opor->op.logand->x = cast; \
+		opor->op.logand->y = opand; \
+		RzILOp *set = rz_il_new_op(RZIL_OP_SET); \
+		set->op.set->x = opor; \
+		set->op.set->v = (dst); \
 		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
 		(name)->op.perform->eff = set; \
 	} while (0)
@@ -120,18 +153,14 @@ static RzPVector *avr_il_clr(AVROp *aop, RzAnalysis *analysis) {
 	avr_return_val_if_invalid_gpr(Rd, NULL);
 
 	RzILOp *clr = NULL;
-	RzILOp *S = NULL;
-	RzILOp *V = NULL;
-	RzILOp *N = NULL;
-	RzILOp *Z = NULL;
-
+	RzILOp *perform = NULL;
 	avr_il_assign_imm(clr, avr_registers[Rd], 0);
-	avr_il_set_bit(S, "SREG", 0, AVR_SREG_S);
-	avr_il_set_bit(V, "SREG", 0, AVR_SREG_V);
-	avr_il_set_bit(N, "SREG", 0, AVR_SREG_N);
-	avr_il_set_bit(Z, "SREG", 1, AVR_SREG_Z);
 
-	return rz_il_make_oplist(5, clr, S, V, N, Z);
+	ut8 bit_0 = ~((1 << AVR_SREG_S) | (1 << AVR_SREG_V) | (1 << AVR_SREG_N));
+	ut8 bit_1 = (1 << AVR_SREG_Z);
+	avr_il_set_bits(perform, "SREG", bit_0, bit_1);
+
+	return rz_il_make_oplist(2, clr, perform);
 }
 
 static RzPVector *avr_il_cpi(AVROp *aop, RzAnalysis *analysis) {
@@ -140,21 +169,15 @@ static RzPVector *avr_il_cpi(AVROp *aop, RzAnalysis *analysis) {
 	ut16 K = aop->param[1];
 	avr_return_val_if_invalid_gpr(Rd, NULL);
 
-	RzILOp *clr = NULL;
-	RzILOp *H = NULL;
-	RzILOp *S = NULL;
-	RzILOp *V = NULL;
-	RzILOp *N = NULL;
-	RzILOp *Z = NULL;
-	RzILOp *C = NULL;
+	RzILOp *cpi = NULL, *zsreg = NULL;
 
-	//avr_il_assign_imm(clr, avr_registers[Rd], 0);
-	//avr_il_set_bit(S, "SREG", 0, AVR_SREG_S);
-	//avr_il_set_bit(V, "SREG", 0, AVR_SREG_V);
-	//avr_il_set_bit(N, "SREG", 0, AVR_SREG_N);
-	//avr_il_set_bit(Z, "SREG", 1, AVR_SREG_Z);
+	// SREG = I|T|H|S|V|N|Z|C
+	// bits = x|x|0|0|0|0|0|0
+	ut8 bit_0 = ~((1 << AVR_SREG_H) | (1 << AVR_SREG_S) | (1 << AVR_SREG_V) |
+		(1 << AVR_SREG_N) | (1 << AVR_SREG_Z) | (1 << AVR_SREG_C));
+	avr_il_set_bits(zsreg, "SREG", bit_0, 0);
 
-	return rz_il_make_nop_list(); //rz_il_make_oplist(5, clr, S, V, N, Z);
+	return rz_il_make_oplist(2, zsreg, cpi);
 }
 
 static RzPVector *avr_il_ldi(AVROp *aop, RzAnalysis *analysis) {
@@ -174,20 +197,24 @@ static RzPVector *avr_il_out(AVROp *aop, RzAnalysis *analysis) {
 	ut16 Rr = aop->param[1];
 	avr_return_val_if_invalid_gpr(Rr, NULL);
 
+	// R0-31 registers from 0 to 0x1F
+	// I/O registers 0x20 to 0x5F
+	// Ext I/O registers 0x60 to 0xFF
+
 	RzILOp *out = NULL;
-	switch (A) {
-	case AVR_SPL_ADDR:
-		avr_il_cast_reg(out, "SP", AVR_SP_SIZE, 0, avr_registers[Rr]);
-		break;
-	case AVR_SPH_ADDR:
-		avr_il_cast_reg(out, "SP", AVR_SP_SIZE, 8, avr_registers[Rr]);
-		break;
-	case AVR_SREG_ADDR:
+	if (A < 32) {
+		avr_il_assign_reg(out, avr_registers[A], avr_registers[Rr]);
+	} else if (A == AVR_SPL_ADDR) {
+		// zeros low 8 bits and OR new value
+		avr_il_set16_from_reg(out, "SP", 0xFF00, 0, avr_registers[Rr]);
+	} else if (A == AVR_SPH_ADDR) {
+		// zeros high 8 bits and OR new value
+		avr_il_set16_from_reg(out, "SP", 0x00FF, 8, avr_registers[Rr]);
+	} else if (A == AVR_SREG_ADDR) {
+		// zeros low 8 bits and OR new value
 		avr_il_assign_reg(out, "SREG", avr_registers[Rr]);
-		break;
-	default:
+	} else {
 		avr_il_store_reg(out, A, avr_registers[Rr]);
-		break;
 	}
 	return rz_il_make_oplist(1, out);
 }
@@ -195,9 +222,16 @@ static RzPVector *avr_il_out(AVROp *aop, RzAnalysis *analysis) {
 static RzPVector *avr_il_rjmp(AVROp *aop, RzAnalysis *analysis) {
 	// PC = PC + k + 1
 	ut16 k = aop->param[0];
-	// op size is added by the VM so we can remove it from the original value
-	rz_il_bv_set_from_ut64(analysis->rzil->vm->pc, k - aop->size);
-	return rz_il_make_nop_list();
+
+	RzILOp *bitv = rz_il_new_op(RZIL_OP_BV);
+	bitv->op.bitv->value = rz_il_bv_new_from_ut64(analysis->rzil->vm->pc->len, k - aop->size);
+	RzILOp *rjmp = rz_il_new_op(RZIL_OP_JMP);
+	rjmp->op.jmp->dst = bitv;
+
+	RzILOp *perform = rz_il_new_op(RZIL_OP_PERFORM);
+	perform->op.perform->eff = rjmp;
+
+	return rz_il_make_oplist(1, perform);
 }
 
 static RzPVector *avr_il_ser(AVROp *aop, RzAnalysis *analysis) {
@@ -327,25 +361,27 @@ static avr_rzil_op avr_ops[AVR_OP_SIZE] = {
 	avr_il_nop, /* AVR_OP_XCH */
 };
 
+/*
 static const char *avr_ops_name[AVR_OP_SIZE] = {
-	"AVR_OP_INVALID", "AVR_OP_ADC", "AVR_OP_ADD", "AVR_OP_ADIW", "AVR_OP_AND", "AVR_OP_ANDI", "AVR_OP_ASR",
-	"AVR_OP_BLD", "AVR_OP_BRCC", "AVR_OP_BRCS", "AVR_OP_BREAK", "AVR_OP_BREQ", "AVR_OP_BRGE", "AVR_OP_BRHC",
-	"AVR_OP_BRHS", "AVR_OP_BRID", "AVR_OP_BRIE", "AVR_OP_BRLO", "AVR_OP_BRLT", "AVR_OP_BRMI", "AVR_OP_BRNE",
-	"AVR_OP_BRPL", "AVR_OP_BRSH", "AVR_OP_BRTC", "AVR_OP_BRTS", "AVR_OP_BRVC", "AVR_OP_BRVS", "AVR_OP_BST",
-	"AVR_OP_CALL", "AVR_OP_CBI", "AVR_OP_CLC", "AVR_OP_CLH", "AVR_OP_CLI", "AVR_OP_CLN", "AVR_OP_CLR",
-	"AVR_OP_CLS", "AVR_OP_CLT", "AVR_OP_CLV", "AVR_OP_CLZ", "AVR_OP_COM", "AVR_OP_CP", "AVR_OP_CPC",
-	"AVR_OP_CPI", "AVR_OP_CPSE", "AVR_OP_DEC", "AVR_OP_DES", "AVR_OP_EICALL", "AVR_OP_EIJMP", "AVR_OP_ELPM",
-	"AVR_OP_EOR", "AVR_OP_FMUL", "AVR_OP_FMULS", "AVR_OP_FMULSU", "AVR_OP_ICALL", "AVR_OP_IJMP", "AVR_OP_IN",
-	"AVR_OP_INC", "AVR_OP_JMP", "AVR_OP_LAC", "AVR_OP_LAS", "AVR_OP_LAT", "AVR_OP_LD", "AVR_OP_LDD",
-	"AVR_OP_LDI", "AVR_OP_LDS", "AVR_OP_LPM", "AVR_OP_LSL", "AVR_OP_LSR", "AVR_OP_MOV", "AVR_OP_MOVW",
-	"AVR_OP_MUL", "AVR_OP_MULS", "AVR_OP_MULSU", "AVR_OP_NEG", "AVR_OP_NOP", "AVR_OP_OR", "AVR_OP_ORI",
-	"AVR_OP_OUT", "AVR_OP_POP", "AVR_OP_PUSH", "AVR_OP_RCALL", "AVR_OP_RET", "AVR_OP_RETI", "AVR_OP_RJMP",
-	"AVR_OP_ROL", "AVR_OP_ROR", "AVR_OP_SBC", "AVR_OP_SBCI", "AVR_OP_SBI", "AVR_OP_SBIC", "AVR_OP_SBIS",
-	"AVR_OP_SBIW", "AVR_OP_SBRC", "AVR_OP_SBRS", "AVR_OP_SEC", "AVR_OP_SEH", "AVR_OP_SEI", "AVR_OP_SEN",
-	"AVR_OP_SER", "AVR_OP_SES", "AVR_OP_SET", "AVR_OP_SEV", "AVR_OP_SEZ", "AVR_OP_SLEEP", "AVR_OP_SPM",
-	"AVR_OP_ST", "AVR_OP_STD", "AVR_OP_STS", "AVR_OP_SUB", "AVR_OP_SUBI", "AVR_OP_SWAP", "AVR_OP_TST",
-	"AVR_OP_WDR", "AVR_OP_XCH"
+	"INVALID", "ADC", "ADD", "ADIW", "AND", "ANDI", "ASR",
+	"BLD", "BRCC", "BRCS", "BREAK", "BREQ", "BRGE", "BRHC",
+	"BRHS", "BRID", "BRIE", "BRLO", "BRLT", "BRMI", "BRNE",
+	"BRPL", "BRSH", "BRTC", "BRTS", "BRVC", "BRVS", "BST",
+	"CALL", "CBI", "CLC", "CLH", "CLI", "CLN", "CLR",
+	"CLS", "CLT", "CLV", "CLZ", "COM", "CP", "CPC",
+	"CPI", "CPSE", "DEC", "DES", "EICALL", "EIJMP", "ELPM",
+	"EOR", "FMUL", "FMULS", "FMULSU", "ICALL", "IJMP", "IN",
+	"INC", "JMP", "LAC", "LAS", "LAT", "LD", "LDD",
+	"LDI", "LDS", "LPM", "LSL", "LSR", "MOV", "MOVW",
+	"MUL", "MULS", "MULSU", "NEG", "NOP", "OR", "ORI",
+	"OUT", "POP", "PUSH", "RCALL", "RET", "RETI", "RJMP",
+	"ROL", "ROR", "SBC", "SBCI", "SBI", "SBIC", "SBIS",
+	"SBIW", "SBRC", "SBRS", "SEC", "SEH", "SEI", "SEN",
+	"SER", "SES", "SET", "SEV", "SEZ", "SLEEP", "SPM",
+	"ST", "STD", "STS", "SUB", "SUBI", "SWAP", "TST",
+	"WDR", "XCH"
 };
+*/
 
 RZ_IPI bool avr_rzil_opcode(RzAnalysis *analysis, RzAnalysisOp *op, ut64 pc, AVROp *aop) {
 	rz_return_val_if_fail(analysis && analysis->rzil, false);

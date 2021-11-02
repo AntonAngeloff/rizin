@@ -4,10 +4,11 @@
 
 #include "il_avr.h"
 
-#define AVR_REG_SIZE  8
-#define AVR_SREG_SIZE 8
-#define AVR_RAMP_SIZE 8
-#define AVR_SP_SIZE   16
+#define AVR_REG_SIZE     8
+#define AVR_SREG_SIZE    8
+#define AVR_RAMP_SIZE    8
+#define AVR_SP_SIZE      16
+#define AVR_CMP_FAKE_REG "CMP8"
 
 // SREG = I|T|H|S|V|N|Z|C
 // bits   0|1|2|3|4|5|6|7
@@ -134,6 +135,23 @@
 		(name)->op.perform->eff = set; \
 	} while (0)
 
+#define avr_il_math_imm(name, dst, srcA, immB, op_id, s) \
+	do { \
+		RzILOp *_var = rz_il_new_op(RZIL_OP_VAR); \
+		_var->op.var->v = (srcA); \
+		RzILOp *_imm = rz_il_new_op(RZIL_OP_INT); \
+		_imm->op.int_->value = (immB); \
+		_imm->op.int_->length = AVR_REG_SIZE; \
+		RzILOp *_math = rz_il_new_op(op_id); \
+		_math->op.s->x = _var; \
+		_math->op.s->y = _imm; \
+		RzILOp *_set = rz_il_new_op(RZIL_OP_SET); \
+		_set->op.set->x = _math; \
+		_set->op.set->v = AVR_CMP_FAKE_REG; \
+		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
+		(name)->op.perform->eff = _set; \
+	} while (0)
+
 typedef RzPVector *(*avr_rzil_op)(AVROp *aop, RzAnalysis *analysis);
 
 const char *avr_registers[32] = {
@@ -169,15 +187,18 @@ static RzPVector *avr_il_cpi(AVROp *aop, RzAnalysis *analysis) {
 	ut16 K = aop->param[1];
 	avr_return_val_if_invalid_gpr(Rd, NULL);
 
-	RzILOp *cpi = NULL, *zsreg = NULL;
+	RzILOp *zsreg = NULL, *cmp = NULL;
 
+	// clears H,S,V,N,Z,C bits and sets them accordingly to
+	// the subtraction of Rd - K
 	// SREG = I|T|H|S|V|N|Z|C
 	// bits = x|x|0|0|0|0|0|0
 	ut8 bit_0 = ~((1 << AVR_SREG_H) | (1 << AVR_SREG_S) | (1 << AVR_SREG_V) |
 		(1 << AVR_SREG_N) | (1 << AVR_SREG_Z) | (1 << AVR_SREG_C));
 	avr_il_set_bits(zsreg, "SREG", bit_0, 0);
+	avr_il_math_imm(cmp, AVR_CMP_FAKE_REG, avr_registers[Rd], K, RZIL_OP_SUB, sub);
 
-	return rz_il_make_oplist(2, zsreg, cpi);
+	return rz_il_make_oplist(2, zsreg, cmp);
 }
 
 static RzPVector *avr_il_ldi(AVROp *aop, RzAnalysis *analysis) {
@@ -461,6 +482,9 @@ RZ_IPI bool avr_rzil_init(RzAnalysis *analysis) {
 		rz_il_vm_add_reg(rzil->vm, "RAMPD", AVR_RAMP_SIZE);
 		rz_il_vm_add_reg(rzil->vm, "EIND", AVR_RAMP_SIZE);
 	}
+
+	// fake register to handle compare operations
+	rz_il_vm_add_reg(rzil->vm, AVR_CMP_FAKE_REG, AVR_REG_SIZE);
 
 	rz_il_vm_add_mem(rzil->vm, 8);
 

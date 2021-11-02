@@ -18,7 +18,7 @@ https://en.wikipedia.org/wiki/Atmel_AVR_instruction_set
 #include <rz_analysis.h>
 
 #include "../../asm/arch/avr/disassembler.h"
-#include "../il/avr/il_avr.h"
+#include "../rzil/avr/il_avr.h"
 
 typedef struct _cpu_const_tag {
 	const char *const key;

@@ -4,11 +4,15 @@
 
 #include "il_avr.h"
 
-#define AVR_REG_SIZE     8
-#define AVR_SREG_SIZE    8
-#define AVR_RAMP_SIZE    8
-#define AVR_SP_SIZE      16
-#define AVR_CMP_FAKE_REG "CMP8"
+#define AVR_REG_SIZE  8
+#define AVR_SREG_SIZE 8
+#define AVR_RAMP_SIZE 8
+#define AVR_SP_SIZE   16
+#define AVR_CPI_HOOK  "cpi"
+#define AVR_CPC_HOOK  "cpc"
+#define AVR_CMP_REG_X "CMPX"
+#define AVR_CMP_REG_Y "CMPY"
+#define AVR_SREG      "SREG"
 
 // SREG = I|T|H|S|V|N|Z|C
 // bits   0|1|2|3|4|5|6|7
@@ -46,6 +50,19 @@
 		(name)->op.perform->eff = set; \
 	} while (0)
 
+#define avr_il_branch_when(name, addr, when) \
+	do { \
+		ut32 _pc_size = analysis->rzil->vm->addr_size; \
+		RzILOp *_jmp = rz_il_new_op(RZIL_OP_JMP); \
+		_jmp->op.jmp->dst = avr_il_imm(_pc_size, addr); \
+		RzILOp *_branch = rz_il_new_op(RZIL_OP_BRANCH); \
+		_branch->op.branch->condition = (when); \
+		_branch->op.branch->true_eff = _jmp; \
+		_branch->op.branch->false_eff = NULL; \
+		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
+		(name)->op.perform->eff = _branch; \
+	} while (0)
+
 #define avr_il_assign_reg(name, dst, src) \
 	do { \
 		RzILOp *var = rz_il_new_op(RZIL_OP_VAR); \
@@ -59,11 +76,8 @@
 
 #define avr_il_assign_imm(name, reg, imm) \
 	do { \
-		RzILOp *n = rz_il_new_op(RZIL_OP_INT); \
-		n->op.int_->value = (imm); \
-		n->op.int_->length = AVR_REG_SIZE; \
 		RzILOp *set = rz_il_new_op(RZIL_OP_SET); \
-		set->op.set->x = n; \
+		set->op.set->x = avr_il_imm(AVR_REG_SIZE, imm); \
 		set->op.set->v = (reg); \
 		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
 		(name)->op.perform->eff = set; \
@@ -73,52 +87,45 @@
 	do { \
 		RzILOp *var = rz_il_new_op(RZIL_OP_VAR); \
 		var->op.var->v = (reg); \
-		RzILOp *addr = rz_il_new_op(RZIL_OP_INT); \
-		addr->op.int_->value = (address); \
-		addr->op.int_->length = 32; \
 		(name) = rz_il_new_op(RZIL_OP_STORE); \
-		(name)->op.store->key = addr; \
+		(name)->op.store->key = avr_il_imm(32, address); \
 		(name)->op.store->value = var; \
 	} while (0)
 
 #define avr_il_set_bits(name, reg, and_bits, or_bits) \
 	do { \
-		RzILOp *tmp = NULL; \
-		RzILOp *sreg = rz_il_new_op(RZIL_OP_VAR); \
-		sreg->op.var->v = (reg); \
-		tmp = rz_il_new_op(RZIL_OP_INT); \
-		tmp->op.int_->value = (and_bits); \
-		tmp->op.int_->length = AVR_REG_SIZE; \
-		RzILOp *opand = rz_il_new_op(RZIL_OP_LOGAND); \
-		opand->op.logand->x = sreg; \
-		opand->op.logand->y = tmp; \
-		if (or_bits) { \
-			RzILOp *mask1 = rz_il_new_op(RZIL_OP_INT); \
-			mask1->op.int_->value = (or_bits); \
-			mask1->op.int_->length = AVR_REG_SIZE; \
-			tmp = rz_il_new_op(RZIL_OP_LOGOR); \
-			tmp->op.logand->x = opand; \
-			tmp->op.logand->y = mask1; \
+		RzILOp *_tmp = NULL; \
+		RzILOp *_var = rz_il_new_op(RZIL_OP_VAR); \
+		_var->op.var->v = (reg); \
+		if (and_bits == 0xFF) { \
+			_tmp = rz_il_new_op(RZIL_OP_LOGOR); \
+			_tmp->op.logand->x = _var; \
+			_tmp->op.logand->y = avr_il_imm(AVR_REG_SIZE, or_bits); \
 		} else { \
-			tmp = opand; \
+			RzILOp *_and = rz_il_new_op(RZIL_OP_LOGAND); \
+			_and->op.logand->x = _var; \
+			_and->op.logand->y = avr_il_imm(AVR_REG_SIZE, and_bits); \
+			_tmp = _and; \
+			if (or_bits) { \
+				_tmp = rz_il_new_op(RZIL_OP_LOGOR); \
+				_tmp->op.logand->x = _and; \
+				_tmp->op.logand->y = avr_il_imm(AVR_REG_SIZE, or_bits); \
+			} \
 		} \
-		RzILOp *set = rz_il_new_op(RZIL_OP_SET); \
-		set->op.set->x = tmp; \
-		set->op.set->v = (reg); \
+		RzILOp *_set = rz_il_new_op(RZIL_OP_SET); \
+		_set->op.set->x = _tmp; \
+		_set->op.set->v = (reg); \
 		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
-		(name)->op.perform->eff = set; \
+		(name)->op.perform->eff = _set; \
 	} while (0)
 
 #define avr_il_set16_from_reg(name, dst, and_mask, sh, src) \
 	do { \
 		RzILOp *var0 = rz_il_new_op(RZIL_OP_VAR); \
 		var0->op.var->v = (dst); \
-		RzILOp *mask = rz_il_new_op(RZIL_OP_INT); \
-		mask->op.int_->value = (and_mask); \
-		mask->op.int_->length = 16; \
 		RzILOp *opand = rz_il_new_op(RZIL_OP_LOGAND); \
 		opand->op.logand->x = var0; \
-		opand->op.logand->y = mask; \
+		opand->op.logand->y = avr_il_imm(16, and_mask); \
 		RzILOp *var1 = rz_il_new_op(RZIL_OP_VAR); \
 		var1->op.var->v = (src); \
 		RzILOp *cast = rz_il_new_op(RZIL_OP_CAST); \
@@ -135,22 +142,95 @@
 		(name)->op.perform->eff = set; \
 	} while (0)
 
-#define avr_il_math_imm(name, dst, srcA, immB, op_id, s) \
+#define avr_il_hook(name, hook) \
 	do { \
-		RzILOp *_var = rz_il_new_op(RZIL_OP_VAR); \
-		_var->op.var->v = (srcA); \
-		RzILOp *_imm = rz_il_new_op(RZIL_OP_INT); \
-		_imm->op.int_->value = (immB); \
-		_imm->op.int_->length = AVR_REG_SIZE; \
-		RzILOp *_math = rz_il_new_op(op_id); \
-		_math->op.s->x = _var; \
-		_math->op.s->y = _imm; \
-		RzILOp *_set = rz_il_new_op(RZIL_OP_SET); \
-		_set->op.set->x = _math; \
-		_set->op.set->v = AVR_CMP_FAKE_REG; \
+		RzILOp *_hook = rz_il_new_op(RZIL_OP_GOTO); \
+		_hook->op.goto_->lbl = hook; \
 		(name) = rz_il_new_op(RZIL_OP_PERFORM); \
-		(name)->op.perform->eff = _set; \
+		(name)->op.perform->eff = _hook; \
 	} while (0)
+
+static inline RzILOp *avr_il_reg(const char *name) {
+	RzILOp *_var = rz_il_new_op(RZIL_OP_VAR);
+	_var->op.var->v = name;
+	return _var;
+}
+
+static inline RzILOp *avr_il_imm(ut32 length, ut64 value) {
+	RzILOp *_imm = rz_il_new_op(RZIL_OP_BITV);
+	_imm->op.bitv->value = rz_il_bv_new_from_ut64(length, value);
+	return _imm;
+}
+
+static void avr_compare(RzILVM *vm, ut8 Rd, ut8 Rr) {
+	ut8 Res = Rd - Rr;
+	ut8 mask = 0;
+	ut8 N = 0, V = 0;
+
+	if (!Res) {
+		// set Z to 1 if Res == 0
+		mask |= (1u << AVR_SREG_Z);
+	}
+
+	if ((((~Rd) & Rr) | (Rr & Res) | (Res & (~Rd))) & (1u << 3)) {
+		// H: (!Rd3 & Rr3) + (Rr3 & Res3) + (Res3 & !Rd3)
+		// Set if there was a borrow from bit 3; cleared otherwise
+		mask |= (1u << AVR_SREG_H);
+	}
+
+	if (((Rd & (~Rr) & (~Res)) | ((~Rd) & Rr && Res)) & (1u << 7)) {
+		// V: (Rd7 & !Rr7 & !Res7) + (!Rd7 & Rr7 & Res7)
+		// Set if two’s complement overflow resulted from the operation; cleared otherwise.
+		mask |= (1u << AVR_SREG_V);
+		V = 1;
+	}
+
+	if (Res & (1u << 7)) {
+		// N: Res7
+		// Set if MSB of the result is set; cleared otherwise.
+		mask |= (1u << AVR_SREG_N);
+		N = 1;
+	}
+
+	if ((((~Rd) & Rr) | (Rr & Res) | (Res & (~Rd))) & (1u << 7)) {
+		// C: (!Rd7 & Rr7) + (Rr7 & Res7) + (Res7 & !Rd7)
+		// Set if the absolute value of Rr is larger than the absolute value of Rd; cleared otherwise
+		mask |= (1u << AVR_SREG_C);
+	}
+
+	if (N ^ V) {
+		// S: N ^ V, For signed tests.
+		mask |= (1u << AVR_SREG_S);
+	}
+
+	if (mask) {
+		RzILOp *tmp = NULL;
+		avr_il_set_bits(tmp, AVR_SREG, 0xFF, mask);
+		rz_il_vm_step(vm, tmp);
+		rz_il_free_op(tmp);
+	}
+}
+
+static void avr_hook_cpi(RzILVM *vm, RzILOp *op) {
+	RzILVal *cmp_x = rz_il_hash_find_val_by_name(vm, AVR_CMP_REG_X);
+	RzILVal *cmp_y = rz_il_hash_find_val_by_name(vm, AVR_CMP_REG_Y);
+	ut8 Rd = rz_il_bv_to_ut8(cmp_x->data.bv);
+	ut8 Rr = rz_il_bv_to_ut8(cmp_y->data.bv);
+	avr_compare(vm, Rd, Rr);
+}
+
+static void avr_hook_cpc(RzILVM *vm, RzILOp *op) {
+	RzILVal *cmp_x = rz_il_hash_find_val_by_name(vm, AVR_CMP_REG_X);
+	RzILVal *cmp_y = rz_il_hash_find_val_by_name(vm, AVR_CMP_REG_Y);
+	RzILVal *sreg_v = rz_il_hash_find_val_by_name(vm, AVR_SREG);
+	ut8 Rd = rz_il_bv_to_ut8(cmp_x->data.bv);
+	ut8 Rr = rz_il_bv_to_ut8(cmp_y->data.bv);
+	ut8 sreg = rz_il_bv_to_ut8(sreg_v->data.bv);
+	if (sreg & (1u << AVR_SREG_C)) {
+		Rr++;
+	}
+	avr_compare(vm, Rd, Rr);
+}
 
 typedef RzPVector *(*avr_rzil_op)(AVROp *aop, RzAnalysis *analysis);
 
@@ -162,7 +242,63 @@ const char *avr_registers[32] = {
 };
 
 static RzPVector *avr_il_nop(AVROp *aop, RzAnalysis *analysis) {
-	return NULL;
+	return NULL; //rz_il_make_nop_list();
+}
+
+static RzPVector *avr_il_brcc(AVROp *aop, RzAnalysis *analysis) {
+	// branch if C = 0
+	ut16 k = aop->param[0];
+
+	RzILOp *brcc = NULL;
+	RzILOp *lognot = rz_il_new_op(RZIL_OP_LOGNOT);
+	lognot->op.lognot->bv = avr_il_reg(AVR_SREG);
+	RzILOp *cond = rz_il_new_op(RZIL_OP_LOGAND);
+	cond->op.logand->x = lognot;
+	cond->op.logand->y = avr_il_imm(AVR_REG_SIZE, 1 << AVR_SREG_C);
+
+	avr_il_branch_when(brcc, k - aop->size, cond);
+	return rz_il_make_oplist(1, brcc);
+}
+
+static RzPVector *avr_il_brcs(AVROp *aop, RzAnalysis *analysis) {
+	// branch if C = 1
+	ut16 k = aop->param[0];
+
+	RzILOp *brcc = NULL;
+	RzILOp *cond = rz_il_new_op(RZIL_OP_LOGAND);
+	cond->op.logand->x = avr_il_reg(AVR_SREG);
+	cond->op.logand->y = avr_il_imm(AVR_REG_SIZE, 1 << AVR_SREG_C);
+
+	avr_il_branch_when(brcc, k - aop->size, cond);
+	return rz_il_make_oplist(1, brcc);
+}
+
+static RzPVector *avr_il_breq(AVROp *aop, RzAnalysis *analysis) {
+	// branch if Z = 1
+	ut16 k = aop->param[0];
+
+	RzILOp *brcc = NULL;
+	RzILOp *cond = rz_il_new_op(RZIL_OP_LOGAND);
+	cond->op.logand->x = avr_il_reg(AVR_SREG);
+	cond->op.logand->y = avr_il_imm(AVR_REG_SIZE, 1 << AVR_SREG_Z);
+
+	avr_il_branch_when(brcc, k - aop->size, cond);
+	return rz_il_make_oplist(1, brcc);
+}
+
+static RzPVector *avr_il_brne(AVROp *aop, RzAnalysis *analysis) {
+	// branch if C = 0
+	ut16 k = aop->param[0];
+
+	RzILOp *brcc = NULL;
+	RzILOp *lognot = rz_il_new_op(RZIL_OP_LOGNOT);
+	lognot->op.lognot->bv = avr_il_reg(AVR_SREG);
+	RzILOp *cond = rz_il_new_op(RZIL_OP_LOGAND);
+	cond->op.logand->x = lognot;
+	cond->op.logand->y = avr_il_imm(AVR_REG_SIZE, 1 << AVR_SREG_Z);
+
+	avr_il_branch_when(brcc, k - aop->size, cond);
+	return rz_il_make_oplist(1, brcc);
 }
 
 static RzPVector *avr_il_clr(AVROp *aop, RzAnalysis *analysis) {
@@ -176,9 +312,36 @@ static RzPVector *avr_il_clr(AVROp *aop, RzAnalysis *analysis) {
 
 	ut8 bit_0 = ~((1 << AVR_SREG_S) | (1 << AVR_SREG_V) | (1 << AVR_SREG_N));
 	ut8 bit_1 = (1 << AVR_SREG_Z);
-	avr_il_set_bits(perform, "SREG", bit_0, bit_1);
+	avr_il_set_bits(perform, AVR_SREG, bit_0, bit_1);
 
 	return rz_il_make_oplist(2, clr, perform);
+}
+
+static RzPVector *avr_il_cpc(AVROp *aop, RzAnalysis *analysis) {
+	// compare with carry
+	// SREG = compare(Rd, Rr, carry)
+	ut16 Rd = aop->param[0];
+	ut16 Rr = aop->param[1];
+	avr_return_val_if_invalid_gpr(Rd, NULL);
+	avr_return_val_if_invalid_gpr(Rr, NULL);
+
+	RzILOp *zsreg = NULL, *cmp_x = NULL, *cmp_y = NULL, *compare = NULL;
+
+	// clears H,S,V,N,Z,C bits and sets them accordingly to
+	// the subtraction of Rd - K
+	// SREG = I|T|H|S|V|N|Z|C
+	// bits = x|x|0|0|0|0|0|0
+	ut8 bit_0 = ((1u << AVR_SREG_H) | (1u << AVR_SREG_S) | (1u << AVR_SREG_V) |
+		(1u << AVR_SREG_N) | (1u << AVR_SREG_Z) | (1u << AVR_SREG_C));
+	bit_0 = ~bit_0;
+	avr_il_set_bits(zsreg, AVR_SREG, bit_0, 0);
+
+	avr_il_assign_reg(cmp_x, AVR_CMP_REG_X, avr_registers[Rd]);
+	avr_il_assign_reg(cmp_y, AVR_CMP_REG_Y, avr_registers[Rr]);
+
+	avr_il_hook(compare, AVR_CPC_HOOK);
+
+	return rz_il_make_oplist(4, zsreg, cmp_x, cmp_y, compare);
 }
 
 static RzPVector *avr_il_cpi(AVROp *aop, RzAnalysis *analysis) {
@@ -187,18 +350,22 @@ static RzPVector *avr_il_cpi(AVROp *aop, RzAnalysis *analysis) {
 	ut16 K = aop->param[1];
 	avr_return_val_if_invalid_gpr(Rd, NULL);
 
-	RzILOp *zsreg = NULL, *cmp = NULL;
+	RzILOp *zsreg = NULL, *cmp_x = NULL, *cmp_y = NULL, *compare = NULL;
 
 	// clears H,S,V,N,Z,C bits and sets them accordingly to
 	// the subtraction of Rd - K
 	// SREG = I|T|H|S|V|N|Z|C
 	// bits = x|x|0|0|0|0|0|0
-	ut8 bit_0 = ~((1 << AVR_SREG_H) | (1 << AVR_SREG_S) | (1 << AVR_SREG_V) |
-		(1 << AVR_SREG_N) | (1 << AVR_SREG_Z) | (1 << AVR_SREG_C));
-	avr_il_set_bits(zsreg, "SREG", bit_0, 0);
-	avr_il_math_imm(cmp, AVR_CMP_FAKE_REG, avr_registers[Rd], K, RZIL_OP_SUB, sub);
+	ut8 bit_0 = ((1u << AVR_SREG_H) | (1u << AVR_SREG_S) | (1u << AVR_SREG_V) |
+		(1u << AVR_SREG_N) | (1u << AVR_SREG_Z) | (1u << AVR_SREG_C));
+	bit_0 = ~bit_0;
+	avr_il_set_bits(zsreg, AVR_SREG, bit_0, 0);
 
-	return rz_il_make_oplist(2, zsreg, cmp);
+	avr_il_assign_reg(cmp_x, AVR_CMP_REG_X, avr_registers[Rd]);
+	avr_il_assign_imm(cmp_y, AVR_CMP_REG_Y, K);
+	avr_il_hook(compare, AVR_CPI_HOOK);
+
+	return rz_il_make_oplist(4, zsreg, cmp_x, cmp_y, compare);
 }
 
 static RzPVector *avr_il_ldi(AVROp *aop, RzAnalysis *analysis) {
@@ -233,7 +400,7 @@ static RzPVector *avr_il_out(AVROp *aop, RzAnalysis *analysis) {
 		avr_il_set16_from_reg(out, "SP", 0x00FF, 8, avr_registers[Rr]);
 	} else if (A == AVR_SREG_ADDR) {
 		// zeros low 8 bits and OR new value
-		avr_il_assign_reg(out, "SREG", avr_registers[Rr]);
+		avr_il_assign_reg(out, AVR_SREG, avr_registers[Rr]);
 	} else {
 		avr_il_store_reg(out, A, avr_registers[Rr]);
 	}
@@ -244,10 +411,9 @@ static RzPVector *avr_il_rjmp(AVROp *aop, RzAnalysis *analysis) {
 	// PC = PC + k + 1
 	ut16 k = aop->param[0];
 
-	RzILOp *bitv = rz_il_new_op(RZIL_OP_BV);
-	bitv->op.bitv->value = rz_il_bv_new_from_ut64(analysis->rzil->vm->pc->len, k - aop->size);
+	ut32 pc_size = analysis->rzil->vm->addr_size;
 	RzILOp *rjmp = rz_il_new_op(RZIL_OP_JMP);
-	rjmp->op.jmp->dst = bitv;
+	rjmp->op.jmp->dst = avr_il_imm(pc_size, k - aop->size);
 
 	RzILOp *perform = rz_il_new_op(RZIL_OP_PERFORM);
 	perform->op.perform->eff = rjmp;
@@ -274,10 +440,10 @@ static avr_rzil_op avr_ops[AVR_OP_SIZE] = {
 	avr_il_nop, /* AVR_OP_ANDI */
 	avr_il_nop, /* AVR_OP_ASR */
 	avr_il_nop, /* AVR_OP_BLD */
-	avr_il_nop, /* AVR_OP_BRCC */
-	avr_il_nop, /* AVR_OP_BRCS */
+	avr_il_brcc,
+	avr_il_brcs,
 	avr_il_nop, /* AVR_OP_BREAK */
-	avr_il_nop, /* AVR_OP_BREQ */
+	avr_il_breq,
 	avr_il_nop, /* AVR_OP_BRGE */
 	avr_il_nop, /* AVR_OP_BRHC */
 	avr_il_nop, /* AVR_OP_BRHS */
@@ -286,7 +452,7 @@ static avr_rzil_op avr_ops[AVR_OP_SIZE] = {
 	avr_il_nop, /* AVR_OP_BRLO */
 	avr_il_nop, /* AVR_OP_BRLT */
 	avr_il_nop, /* AVR_OP_BRMI */
-	avr_il_nop, /* AVR_OP_BRNE */
+	avr_il_brne,
 	avr_il_nop, /* AVR_OP_BRPL */
 	avr_il_nop, /* AVR_OP_BRSH */
 	avr_il_nop, /* AVR_OP_BRTC */
@@ -307,7 +473,7 @@ static avr_rzil_op avr_ops[AVR_OP_SIZE] = {
 	avr_il_nop, /* AVR_OP_CLZ */
 	avr_il_nop, /* AVR_OP_COM */
 	avr_il_nop, /* AVR_OP_CP */
-	avr_il_nop, /* AVR_OP_CPC */
+	avr_il_cpc,
 	avr_il_cpi,
 	avr_il_nop, /* AVR_OP_CPSE */
 	avr_il_nop, /* AVR_OP_DEC */
@@ -382,28 +548,6 @@ static avr_rzil_op avr_ops[AVR_OP_SIZE] = {
 	avr_il_nop, /* AVR_OP_XCH */
 };
 
-/*
-static const char *avr_ops_name[AVR_OP_SIZE] = {
-	"INVALID", "ADC", "ADD", "ADIW", "AND", "ANDI", "ASR",
-	"BLD", "BRCC", "BRCS", "BREAK", "BREQ", "BRGE", "BRHC",
-	"BRHS", "BRID", "BRIE", "BRLO", "BRLT", "BRMI", "BRNE",
-	"BRPL", "BRSH", "BRTC", "BRTS", "BRVC", "BRVS", "BST",
-	"CALL", "CBI", "CLC", "CLH", "CLI", "CLN", "CLR",
-	"CLS", "CLT", "CLV", "CLZ", "COM", "CP", "CPC",
-	"CPI", "CPSE", "DEC", "DES", "EICALL", "EIJMP", "ELPM",
-	"EOR", "FMUL", "FMULS", "FMULSU", "ICALL", "IJMP", "IN",
-	"INC", "JMP", "LAC", "LAS", "LAT", "LD", "LDD",
-	"LDI", "LDS", "LPM", "LSL", "LSR", "MOV", "MOVW",
-	"MUL", "MULS", "MULSU", "NEG", "NOP", "OR", "ORI",
-	"OUT", "POP", "PUSH", "RCALL", "RET", "RETI", "RJMP",
-	"ROL", "ROR", "SBC", "SBCI", "SBI", "SBIC", "SBIS",
-	"SBIW", "SBRC", "SBRS", "SEC", "SEH", "SEI", "SEN",
-	"SER", "SES", "SET", "SEV", "SEZ", "SLEEP", "SPM",
-	"ST", "STD", "STS", "SUB", "SUBI", "SWAP", "TST",
-	"WDR", "XCH"
-};
-*/
-
 RZ_IPI bool avr_rzil_opcode(RzAnalysis *analysis, RzAnalysisOp *op, ut64 pc, AVROp *aop) {
 	rz_return_val_if_fail(analysis && analysis->rzil, false);
 	op->rzil_op = RZ_NEW0(RzAnalysisRzilOp);
@@ -420,9 +564,6 @@ RZ_IPI bool avr_rzil_opcode(RzAnalysis *analysis, RzAnalysisOp *op, ut64 pc, AVR
 	avr_rzil_op create_op = avr_ops[aop->mnemonic];
 	op->rzil_op->ops = create_op(aop, analysis);
 
-	//if (create_op != avr_il_nop) {
-	//	eprintf("0x%08llx -> op %s %d\n", pc, avr_ops_name[aop->mnemonic], create_op == avr_il_nop);
-	//}
 	return true;
 }
 
@@ -438,6 +579,12 @@ RZ_IPI bool avr_rzil_fini(RzAnalysis *analysis) {
 
 	rzil->inited = false;
 	return true;
+}
+
+static void avr_il_vm_add_hook(RzILVM *vm, RzILVmHook hook, const char *name) {
+	RzILEffectLabel *compare = rz_il_vm_create_label_lazy(vm, name);
+	compare->hook = (void *)hook;
+	compare->type = EFFECT_LABEL_HOOK;
 }
 
 RZ_IPI bool avr_rzil_init(RzAnalysis *analysis) {
@@ -473,7 +620,7 @@ RZ_IPI bool avr_rzil_init(RzAnalysis *analysis) {
 	rz_il_vm_add_reg(rzil->vm, "SP", AVR_SP_SIZE);
 	// SREG = I|T|H|S|V|N|Z|C
 	// bits   0|1|2|3|4|5|6|7
-	rz_il_vm_add_reg(rzil->vm, "SREG", AVR_SREG_SIZE);
+	rz_il_vm_add_reg(rzil->vm, AVR_SREG, AVR_SREG_SIZE);
 
 	if (addr_space > 16) {
 		rz_il_vm_add_reg(rzil->vm, "RAMPX", AVR_RAMP_SIZE);
@@ -483,10 +630,16 @@ RZ_IPI bool avr_rzil_init(RzAnalysis *analysis) {
 		rz_il_vm_add_reg(rzil->vm, "EIND", AVR_RAMP_SIZE);
 	}
 
-	// fake register to handle compare operations
-	rz_il_vm_add_reg(rzil->vm, AVR_CMP_FAKE_REG, AVR_REG_SIZE);
+	rz_il_vm_add_reg(rzil->vm, AVR_CMP_REG_X, AVR_REG_SIZE);
+	rz_il_vm_add_reg(rzil->vm, AVR_CMP_REG_Y, AVR_REG_SIZE);
 
+	// fake register to handle compare operations
 	rz_il_vm_add_mem(rzil->vm, 8);
 
+	// hooks
+	avr_il_vm_add_hook(rzil->vm, avr_hook_cpi, AVR_CPI_HOOK);
+	avr_il_vm_add_hook(rzil->vm, avr_hook_cpc, AVR_CPC_HOOK);
+
+	rzil->inited = true;
 	return true;
 }

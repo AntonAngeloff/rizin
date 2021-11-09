@@ -10,20 +10,31 @@
 #define AVR_SP_SIZE   16
 #define AVR_CPI_HOOK  "cpi"
 #define AVR_CPC_HOOK  "cpc"
-#define AVR_CMP_REG_X "CMPX"
-#define AVR_CMP_REG_Y "CMPY"
-#define AVR_SREG      "SREG"
+#define AVR_CMP_REG   "CMP"
+#define AVR_RAMPX     "RAMPX"
+#define AVR_RAMPY     "RAMPY"
+#define AVR_RAMPZ     "RAMPZ"
+#define AVR_RAMPD     "RAMPD"
+#define AVR_EIND      "EIND"
 
 // SREG = I|T|H|S|V|N|Z|C
 // bits   0|1|2|3|4|5|6|7
-#define AVR_SREG_I 0
-#define AVR_SREG_T 1
-#define AVR_SREG_H 2
-#define AVR_SREG_S 3
-#define AVR_SREG_V 4
-#define AVR_SREG_N 5
-#define AVR_SREG_Z 6
-#define AVR_SREG_C 7
+#define AVR_SREG_I_BIT (1u << 0)
+#define AVR_SREG_I     "SREG I"
+#define AVR_SREG_T_BIT (1u << 1)
+#define AVR_SREG_T     "SREG T"
+#define AVR_SREG_H_BIT (1u << 2)
+#define AVR_SREG_H     "SREG H"
+#define AVR_SREG_S_BIT (1u << 3)
+#define AVR_SREG_S     "SREG S"
+#define AVR_SREG_V_BIT (1u << 4)
+#define AVR_SREG_V     "SREG V"
+#define AVR_SREG_N_BIT (1u << 5)
+#define AVR_SREG_N     "SREG N"
+#define AVR_SREG_Z_BIT (1u << 6)
+#define AVR_SREG_Z     "SREG Z"
+#define AVR_SREG_C_BIT (1u << 7)
+#define AVR_SREG_C     "SREG C"
 
 #define AVR_SPL_ADDR  0x3d
 #define AVR_SPH_ADDR  0x3e
@@ -169,38 +180,38 @@ static void avr_compare(RzILVM *vm, ut8 Rd, ut8 Rr) {
 
 	if (!Res) {
 		// set Z to 1 if Res == 0
-		mask |= (1u << AVR_SREG_Z);
+		mask |= AVR_SREG_Z_BIT;
 	}
 
 	if ((((~Rd) & Rr) | (Rr & Res) | (Res & (~Rd))) & (1u << 3)) {
 		// H: (!Rd3 & Rr3) + (Rr3 & Res3) + (Res3 & !Rd3)
 		// Set if there was a borrow from bit 3; cleared otherwise
-		mask |= (1u << AVR_SREG_H);
+		mask |= AVR_SREG_H_BIT;
 	}
 
 	if (((Rd & (~Rr) & (~Res)) | ((~Rd) & Rr && Res)) & (1u << 7)) {
 		// V: (Rd7 & !Rr7 & !Res7) + (!Rd7 & Rr7 & Res7)
 		// Set if two’s complement overflow resulted from the operation; cleared otherwise.
-		mask |= (1u << AVR_SREG_V);
+		mask |= AVR_SREG_V_BIT;
 		V = 1;
 	}
 
 	if (Res & (1u << 7)) {
 		// N: Res7
 		// Set if MSB of the result is set; cleared otherwise.
-		mask |= (1u << AVR_SREG_N);
+		mask |= AVR_SREG_N_BIT;
 		N = 1;
 	}
 
 	if ((((~Rd) & Rr) | (Rr & Res) | (Res & (~Rd))) & (1u << 7)) {
 		// C: (!Rd7 & Rr7) + (Rr7 & Res7) + (Res7 & !Rd7)
 		// Set if the absolute value of Rr is larger than the absolute value of Rd; cleared otherwise
-		mask |= (1u << AVR_SREG_C);
+		mask |= AVR_SREG_C_BIT;
 	}
 
 	if (N ^ V) {
 		// S: N ^ V, For signed tests.
-		mask |= (1u << AVR_SREG_S);
+		mask |= AVR_SREG_S_BIT;
 	}
 
 	if (mask) {
@@ -310,8 +321,8 @@ static RzPVector *avr_il_clr(AVROp *aop, RzAnalysis *analysis) {
 	RzILOp *perform = NULL;
 	avr_il_assign_imm(clr, avr_registers[Rd], 0);
 
-	ut8 bit_0 = ~((1 << AVR_SREG_S) | (1 << AVR_SREG_V) | (1 << AVR_SREG_N));
-	ut8 bit_1 = (1 << AVR_SREG_Z);
+	ut8 bit_0 = ~(AVR_SREG_S_BIT | AVR_SREG_V_BIT | AVR_SREG_N_BIT);
+	ut8 bit_1 = AVR_SREG_Z_BIT;
 	avr_il_set_bits(perform, AVR_SREG, bit_0, bit_1);
 
 	return rz_il_make_oplist(2, clr, perform);
@@ -331,8 +342,7 @@ static RzPVector *avr_il_cpc(AVROp *aop, RzAnalysis *analysis) {
 	// the subtraction of Rd - K
 	// SREG = I|T|H|S|V|N|Z|C
 	// bits = x|x|0|0|0|0|0|0
-	ut8 bit_0 = ((1u << AVR_SREG_H) | (1u << AVR_SREG_S) | (1u << AVR_SREG_V) |
-		(1u << AVR_SREG_N) | (1u << AVR_SREG_Z) | (1u << AVR_SREG_C));
+	ut8 bit_0 = (AVR_SREG_H_BIT | AVR_SREG_S_BIT | AVR_SREG_V_BIT | AVR_SREG_N_BIT | AVR_SREG_Z_BIT | AVR_SREG_C_BIT);
 	bit_0 = ~bit_0;
 	avr_il_set_bits(zsreg, AVR_SREG, bit_0, 0);
 
@@ -356,8 +366,7 @@ static RzPVector *avr_il_cpi(AVROp *aop, RzAnalysis *analysis) {
 	// the subtraction of Rd - K
 	// SREG = I|T|H|S|V|N|Z|C
 	// bits = x|x|0|0|0|0|0|0
-	ut8 bit_0 = ((1u << AVR_SREG_H) | (1u << AVR_SREG_S) | (1u << AVR_SREG_V) |
-		(1u << AVR_SREG_N) | (1u << AVR_SREG_Z) | (1u << AVR_SREG_C));
+	ut8 bit_0 = (AVR_SREG_H_BIT | AVR_SREG_S_BIT | AVR_SREG_V_BIT | AVR_SREG_N_BIT | AVR_SREG_Z_BIT | AVR_SREG_C_BIT);
 	bit_0 = ~bit_0;
 	avr_il_set_bits(zsreg, AVR_SREG, bit_0, 0);
 
@@ -618,27 +627,30 @@ RZ_IPI bool avr_rzil_init(RzAnalysis *analysis) {
 	}
 
 	rz_il_vm_add_reg(rzil->vm, "SP", AVR_SP_SIZE);
-	// SREG = I|T|H|S|V|N|Z|C
-	// bits   0|1|2|3|4|5|6|7
-	rz_il_vm_add_reg(rzil->vm, AVR_SREG, AVR_SREG_SIZE);
 
 	if (addr_space > 16) {
-		rz_il_vm_add_reg(rzil->vm, "RAMPX", AVR_RAMP_SIZE);
-		rz_il_vm_add_reg(rzil->vm, "RAMPY", AVR_RAMP_SIZE);
-		rz_il_vm_add_reg(rzil->vm, "RAMPZ", AVR_RAMP_SIZE);
-		rz_il_vm_add_reg(rzil->vm, "RAMPD", AVR_RAMP_SIZE);
-		rz_il_vm_add_reg(rzil->vm, "EIND", AVR_RAMP_SIZE);
+		rz_il_vm_add_reg(rzil->vm, AVR_RAMPX, AVR_RAMP_SIZE);
+		rz_il_vm_add_reg(rzil->vm, AVR_RAMPY, AVR_RAMP_SIZE);
+		rz_il_vm_add_reg(rzil->vm, AVR_RAMPZ, AVR_RAMP_SIZE);
+		rz_il_vm_add_reg(rzil->vm, AVR_RAMPD, AVR_RAMP_SIZE);
+		rz_il_vm_add_reg(rzil->vm, AVR_EIND, AVR_RAMP_SIZE);
 	}
 
-	rz_il_vm_add_reg(rzil->vm, AVR_CMP_REG_X, AVR_REG_SIZE);
-	rz_il_vm_add_reg(rzil->vm, AVR_CMP_REG_Y, AVR_REG_SIZE);
+	// SREG = I|T|H|S|V|N|Z|C
+	// bits   0|1|2|3|4|5|6|7
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_I, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_T, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_H, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_S, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_V, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_N, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_Z, false);
+	rz_il_vm_add_bit_reg(rzil->vm, AVR_SREG_C, false);
 
 	// fake register to handle compare operations
-	rz_il_vm_add_mem(rzil->vm, 8);
+	rz_il_vm_add_reg(rzil->vm, AVR_CMP_REG, AVR_REG_SIZE);
 
-	// hooks
-	avr_il_vm_add_hook(rzil->vm, avr_hook_cpi, AVR_CPI_HOOK);
-	avr_il_vm_add_hook(rzil->vm, avr_hook_cpc, AVR_CPC_HOOK);
+	rz_il_vm_add_mem(rzil->vm, 8);
 
 	rzil->inited = true;
 	return true;

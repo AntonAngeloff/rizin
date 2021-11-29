@@ -175,8 +175,9 @@ static bool structured_member_walker(const RzTypeDB *typedb, RzList /* RzTypePat
  */
 RZ_API RZ_OWN RzList /* RzTypePath */ *rz_type_path_by_offset(const RzTypeDB *typedb, RzBaseType *btype, ut64 offset) {
 	RzList *list = rz_list_newf((RzListFree)rz_type_path_free);
+	RzType *t = NULL;
 	if (btype->kind == RZ_BASE_TYPE_KIND_STRUCT) {
-		RzType *t = rz_type_identifier_of_base_type(typedb, btype, false);
+		t = rz_type_identifier_of_base_type(typedb, btype, false);
 		RzTypeStructMember *memb;
 		ut64 memb_offset = 0;
 		rz_vector_foreach(&btype->struct_data.members, memb) {
@@ -197,7 +198,7 @@ RZ_API RZ_OWN RzList /* RzTypePath */ *rz_type_path_by_offset(const RzTypeDB *ty
 		// members have exact same offset
 		// But if the union has compound members, e.g. structures, their
 		// internal offsets can be different
-		RzType *t = rz_type_identifier_of_base_type(typedb, btype, false);
+		t = rz_type_identifier_of_base_type(typedb, btype, false);
 		RzTypeUnionMember *memb;
 		rz_vector_foreach(&btype->union_data.members, memb) {
 			char *path = rz_str_newf("%s.%s", btype->name, memb->name);
@@ -207,6 +208,7 @@ RZ_API RZ_OWN RzList /* RzTypePath */ *rz_type_path_by_offset(const RzTypeDB *ty
 	} else {
 		rz_warn_if_reached();
 	}
+	free(t);
 	return list;
 }
 

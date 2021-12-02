@@ -501,3 +501,12 @@ foreach arch : sflib_arch
     install_headers(join_paths('include/sflib', arch, file), install_dir: join_paths(rizin_incdir, 'sflib', arch))
   endforeach
 endforeach
+
+conf = configuration_data()
+conf.set('RZ_VERSION', rizin_version)
+cmake_mod.configure_package_config_file(
+  name: 'Rizin',
+  input: 'RizinConfig.cmake.in',
+  install_dir: rizin_cmakedir,
+  configuration: conf,
+)

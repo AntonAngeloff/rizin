@@ -504,6 +504,7 @@ endforeach
 
 conf = configuration_data()
 conf.set('RZ_VERSION', rizin_version)
+conf.set('INSTALL_PLUGDIR', rizin_plugins)
 cmake_mod.configure_package_config_file(
   name: 'Rizin',
   input: 'RizinConfig.cmake.in',

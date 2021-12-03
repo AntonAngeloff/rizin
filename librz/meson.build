@@ -508,6 +508,6 @@ conf.set('INSTALL_PLUGDIR', rizin_plugins)
 cmake_mod.configure_package_config_file(
   name: 'Rizin',
   input: 'RizinConfig.cmake.in',
-  install_dir: rizin_cmakedir,
+  install_dir: rizin_cmakedir / 'Rizin',
   configuration: conf,
 )

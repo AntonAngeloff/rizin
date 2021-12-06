@@ -25,7 +25,7 @@
 			RZ_LOG_ERROR("Failed to write registers.\n"); \
 			return RZ_CMD_STATUS_ERROR; \
 		} \
-		rz_core_debug_regs2flags(core); \
+		rz_core_regs2flags(core); \
 	} while (0)
 
 static RzList *filter_reg_items(RzReg *reg, RZ_NULLABLE const char *filter) {

@@ -55,11 +55,11 @@ RZ_API bool rz_core_debug_step_one(RzCore *core, int times) {
 		rz_debug_trace_pc(core->dbg, pc);
 		if (!rz_debug_step(core->dbg, times)) {
 			eprintf("Step failed\n");
-			rz_core_debug_regs2flags(core);
+			rz_core_regs2flags(core);
 			core->break_loop = true;
 			return false;
 		}
-		rz_core_debug_regs2flags(core);
+		rz_core_regs2flags(core);
 	} else {
 		int i = 0;
 		do {
@@ -79,7 +79,7 @@ RZ_IPI void rz_core_debug_continue(RzCore *core) {
 		core->dbg->continue_all_threads = true;
 #endif
 		rz_debug_continue(core->dbg);
-		rz_core_debug_regs2flags(core);
+		rz_core_regs2flags(core);
 		rz_cons_break_pop();
 		rz_core_dbg_follow_seek_register(core);
 	} else {
@@ -153,7 +153,7 @@ RZ_API bool rz_core_debug_continue_until(RzCore *core, ut64 addr, ut64 to) {
 			rz_debug_step(core->dbg, 1);
 			steps++;
 		}
-		rz_core_debug_regs2flags(core);
+		rz_core_regs2flags(core);
 		rz_cons_break_pop();
 		return true;
 	}
@@ -164,7 +164,7 @@ RZ_API bool rz_core_debug_continue_until(RzCore *core, ut64 addr, ut64 to) {
 			eprintf("Cannot continue, run ood?\n");
 		} else {
 			rz_debug_continue(core->dbg);
-			rz_core_debug_regs2flags(core);
+			rz_core_regs2flags(core);
 		}
 		rz_bp_del(core->dbg->bp, addr);
 	} else {
@@ -198,8 +198,9 @@ RZ_IPI RzList /*<RzRegItem>*/ *rz_core_regs2flags_candidates(RzCore *core, RzReg
 	return ret;
 }
 
-static void regs_to_flags(RzCore *core) {
-	RzList *l = rz_core_regs2flags_candidates(core, core->dbg->reg);
+static void regs_to_flags(RzCore *core, RzReg *regs) {
+	rz_return_if_fail(core && regs);
+	RzList *l = rz_core_regs2flags_candidates(core, regs);
 	if (!l) {
 		return;
 	}
@@ -207,25 +208,28 @@ static void regs_to_flags(RzCore *core) {
 	RzListIter *iter;
 	RzRegItem *reg;
 	rz_list_foreach (l, iter, reg) {
-		ut64 regval = rz_reg_get_value(core->dbg->reg, reg);
+		ut64 regval = rz_reg_get_value(regs, reg);
 		rz_flag_set(core->flags, reg->name, regval, reg->size / 8);
 	}
 	rz_flag_space_pop(core->flags);
 	rz_list_free(l);
 }
 
+/**
+ * \brief Update or create flags for all registers where it makes sense
+ *
+ * Registers are taken either from core->dbg->reg or core->analysis->reg depending
+ * on whether we are currently debugging.
+ * "makes sens" currently means regs that have the same size as an address,
+ * but this may change in case a better heuristic is found.
+ */
 RZ_IPI void rz_core_regs2flags(RzCore *core) {
-	regs_to_flags(core);
-}
-
-/// update or create flags for all registers where it makes sense (regs that have the same size as an address)
-RZ_IPI void rz_core_debug_regs2flags(RzCore *core) {
 	if (core->bin->is_debugger) {
 		if (rz_debug_reg_sync(core->dbg, RZ_REG_TYPE_GPR, false)) {
-			regs_to_flags(core);
+			regs_to_flags(core, core->dbg->reg);
 		}
 	} else {
-		rz_core_regs2flags(core);
+		regs_to_flags(core, core->analysis->reg);
 	}
 }
 
@@ -256,7 +260,7 @@ RZ_IPI bool rz_core_debug_reg_set(RzCore *core, const char *regname, ut64 val, c
 		rz_reg_set_value(core->dbg->reg, r, val);
 	}
 	rz_debug_reg_sync(core->dbg, RZ_REG_TYPE_ANY, true);
-	rz_core_debug_regs2flags(core);
+	rz_core_regs2flags(core);
 	return true;
 }
 
@@ -507,13 +511,13 @@ RZ_IPI void rz_core_debug_single_step_over(RzCore *core) {
 			rz_cons_break_push(rz_core_static_debug_stop, core->dbg);
 			rz_reg_arena_swap(core->dbg->reg, true);
 			rz_debug_continue_until_optype(core->dbg, RZ_ANALYSIS_OP_TYPE_RET, 1);
-			rz_core_debug_regs2flags(core);
+			rz_core_regs2flags(core);
 			rz_cons_break_pop();
 			rz_core_dbg_follow_seek_register(core);
 			core->print->cur_enabled = 0;
 		} else {
 			rz_core_cmd(core, "dso", 0);
-			rz_core_debug_regs2flags(core);
+			rz_core_regs2flags(core);
 		}
 	} else {
 		rz_core_analysis_esil_step_over(core);

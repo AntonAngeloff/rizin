@@ -376,7 +376,7 @@ RZ_IPI int rz_core_analysis_set_reg(RzCore *core, const char *regname, ut64 val)
 	}
 	rz_reg_set_value(core->dbg->reg, r, val);
 	rz_debug_reg_sync(core->dbg, RZ_REG_TYPE_ANY, true);
-	rz_core_debug_regs2flags(core);
+	rz_core_regs2flags(core);
 	return 0;
 }
 

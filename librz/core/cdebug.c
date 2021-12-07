@@ -7,6 +7,11 @@
 #include <rz_debug.h>
 #include "core_private.h"
 
+/// Check whether the core is in debug mode (equivalent to cfg.debug)
+RZ_API bool rz_core_is_debug(RzCore *core) {
+	return core->bin->is_debugger;
+}
+
 static bool is_x86_call(RzDebug *dbg, ut64 addr) {
 	ut8 buf[3];
 	ut8 *op = buf;
@@ -47,7 +52,7 @@ static bool is_x86_ret(RzDebug *dbg, ut64 addr) {
 }
 
 RZ_API bool rz_core_debug_step_one(RzCore *core, int times) {
-	if (rz_config_get_b(core->config, "cfg.debug")) {
+	if (rz_core_is_debug(core)) {
 		rz_reg_arena_swap(core->dbg->reg, true);
 		// sync registers for BSD PT_STEP/PT_CONT
 		rz_debug_reg_sync(core->dbg, RZ_REG_TYPE_GPR, false);
@@ -72,7 +77,7 @@ RZ_API bool rz_core_debug_step_one(RzCore *core, int times) {
 }
 
 RZ_IPI void rz_core_debug_continue(RzCore *core) {
-	if (rz_config_get_b(core->config, "cfg.debug")) {
+	if (rz_core_is_debug(core)) {
 		rz_cons_break_push(rz_core_static_debug_stop, core->dbg);
 		rz_reg_arena_swap(core->dbg->reg, true);
 #if __linux__
@@ -481,7 +486,7 @@ beach:
 }
 
 RZ_IPI void rz_core_debug_sync_bits(RzCore *core) {
-	if (rz_config_get_b(core->config, "cfg.debug")) {
+	if (rz_core_is_debug(core)) {
 		ut64 asm_bits = rz_config_get_i(core->config, "asm.bits");
 		if (asm_bits != core->dbg->bits * 8) {
 			rz_config_set_i(core->config, "asm.bits", core->dbg->bits * 8);
@@ -490,7 +495,7 @@ RZ_IPI void rz_core_debug_sync_bits(RzCore *core) {
 }
 
 RZ_IPI void rz_core_debug_single_step_in(RzCore *core) {
-	if (rz_config_get_b(core->config, "cfg.debug")) {
+	if (rz_core_is_debug(core)) {
 		if (core->print->cur_enabled) {
 			rz_core_debug_continue_until(core, core->offset, core->offset + core->print->cur);
 			core->print->cur_enabled = 0;
@@ -506,7 +511,7 @@ RZ_IPI void rz_core_debug_single_step_in(RzCore *core) {
 RZ_IPI void rz_core_debug_single_step_over(RzCore *core) {
 	bool io_cache = rz_config_get_b(core->config, "io.cache");
 	rz_config_set_b(core->config, "io.cache", false);
-	if (rz_config_get_b(core->config, "cfg.debug")) {
+	if (rz_core_is_debug(core)) {
 		if (core->print->cur_enabled) {
 			rz_cons_break_push(rz_core_static_debug_stop, core->dbg);
 			rz_reg_arena_swap(core->dbg->reg, true);

@@ -180,64 +180,6 @@ RZ_API bool rz_core_debug_continue_until(RzCore *core, ut64 addr, ut64 to) {
 	return true;
 }
 
-/// Construct the list of registers that should be applied as flags by default
-/// (e.g. because their size matches the pointer size)
-RZ_IPI RzList /*<RzRegItem>*/ *rz_core_reg_flags_candidates(RzCore *core, RzReg *reg) {
-	const RzList *l = rz_reg_get_list(core->dbg->reg, RZ_REG_TYPE_GPR);
-	if (!l) {
-		return NULL;
-	}
-	int size = rz_analysis_get_address_bits(core->analysis);
-	RzList *ret = rz_list_new();
-	if (!ret) {
-		return NULL;
-	}
-	RzListIter *iter;
-	RzRegItem *item;
-	rz_list_foreach (l, iter, item) {
-		if (size != 0 && size != item->size) {
-			continue;
-		}
-		rz_list_push(ret, item);
-	}
-	return ret;
-}
-
-static void regs_to_flags(RzCore *core, RzReg *regs) {
-	rz_return_if_fail(core && regs);
-	RzList *l = rz_core_reg_flags_candidates(core, regs);
-	if (!l) {
-		return;
-	}
-	rz_flag_space_push(core->flags, RZ_FLAGS_FS_REGISTERS);
-	RzListIter *iter;
-	RzRegItem *reg;
-	rz_list_foreach (l, iter, reg) {
-		ut64 regval = rz_reg_get_value(regs, reg);
-		rz_flag_set(core->flags, reg->name, regval, reg->size / 8);
-	}
-	rz_flag_space_pop(core->flags);
-	rz_list_free(l);
-}
-
-/**
- * \brief Update or create flags for all registers where it makes sense
- *
- * Registers are taken either from core->dbg->reg or core->analysis->reg depending
- * on whether we are currently debugging.
- * "makes sens" currently means regs that have the same size as an address,
- * but this may change in case a better heuristic is found.
- */
-RZ_IPI void rz_core_reg_update_flags(RzCore *core) {
-	if (core->bin->is_debugger) {
-		if (rz_debug_reg_sync(core->dbg, RZ_REG_TYPE_GPR, false)) {
-			regs_to_flags(core, core->dbg->reg);
-		}
-	} else {
-		regs_to_flags(core, core->analysis->reg);
-	}
-}
-
 RZ_IPI bool rz_core_debug_reg_set(RzCore *core, const char *regname, ut64 val, const char *strval) {
 	RzRegItem *r = rz_reg_get(core->dbg->reg, regname, -1);
 	if (!r) {

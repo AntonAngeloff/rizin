@@ -857,11 +857,11 @@ RZ_API void rz_core_analysis_type_match(RzCore *core, RzAnalysisFunction *fcn, H
 	};
 
 	HtUP *op_cache = NULL;
-	const char *pc = rz_reg_get_name(core->dbg->reg, RZ_REG_NAME_PC);
+	const char *pc = rz_reg_get_name(core->analysis->reg, RZ_REG_NAME_PC);
 	if (!pc) {
 		goto out_function;
 	}
-	RzRegItem *r = rz_reg_get(core->dbg->reg, pc, -1);
+	RzRegItem *r = rz_reg_get(core->analysis->reg, pc, -1);
 	if (!r) {
 		goto out_function;
 	}
@@ -871,7 +871,7 @@ RZ_API void rz_core_analysis_type_match(RzCore *core, RzAnalysisFunction *fcn, H
 	RzAnalysisBlock *bb;
 	rz_list_foreach (fcn->bbs, it, bb) {
 		ut64 addr = bb->addr;
-		rz_reg_set_value(core->dbg->reg, r, addr);
+		rz_reg_set_value(core->analysis->reg, r, addr);
 		ht_up_free(op_cache);
 		op_cache = ht_up_new(NULL, free_op_cache_kv, NULL);
 		if (!op_cache) {
@@ -907,7 +907,7 @@ RZ_API void rz_core_analysis_type_match(RzCore *core, RzAnalysisFunction *fcn, H
 			}
 
 			if (rz_analysis_op_nonlinear(aop->type)) { // skip the instr
-				rz_reg_set_value(core->dbg->reg, r, addr + aop->size);
+				rz_reg_set_value(core->analysis->reg, r, addr + aop->size);
 			} else {
 				rz_core_esil_step(core, UT64_MAX, NULL, NULL, false);
 			}

@@ -419,7 +419,7 @@ static int arm_op(RzAnalysis *analysis, RzAnalysisOp *op, ut64 addr, const ut8 *
 	return arm_op32(analysis, op, addr, data, len);
 }
 
-static bool set_reg_profile(RzAnalysis *analysis) {
+static char *get_reg_profile(RzAnalysis *analysis) {
 	// TODO: support 64bit profile
 	const char *p32 =
 		"=PC	r15\n"
@@ -451,7 +451,7 @@ static bool set_reg_profile(RzAnalysis *analysis) {
 		"gpr	r16	.32	64	0\n"
 		"gpr	r17	.32	68	0\n"
 		"gpr	cpsr	.32	72	0\n";
-	return rz_reg_set_profile_string(analysis->reg, p32);
+	return strdup(p32);
 }
 
 static int archinfo(RzAnalysis *analysis, int q) {
@@ -487,7 +487,7 @@ RzAnalysisPlugin rz_analysis_plugin_arm_gnu = {
 	.archinfo = archinfo,
 	.address_bits = address_bits,
 	.op = &arm_op,
-	.set_reg_profile = set_reg_profile,
+	.get_reg_profile = get_reg_profile,
 };
 
 #ifndef RZ_PLUGIN_INCORE
